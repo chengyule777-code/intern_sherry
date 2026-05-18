@@ -4,6 +4,7 @@ alias ga='git add .'
 alias gc='git commit -m'
 alias gp='git push origin main'
 alias gl='git log --oneline --graph'
+alias pl='git pull origin main'
 
 #---virtual environment alias---
 alias venv='source venv/bin/activate'
