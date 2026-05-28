@@ -1,0 +1,28 @@
+{
+  "schema_version": 2,
+  "device_address": "C0:71:CC:2A:3A:DB",
+  "device_address_sanitized": "C071CC2A3ADB",
+  "session_kind": "EMGS",
+  "session_root_dir": "/home/rr/rr_data/rr_20260526_102634",
+  "session_timestamp": "20260526_102634",
+  "segments": [
+    {
+      "segment_index": 1,
+      "open_reason": "record_start",
+      "close_reason": "manual_stop",
+      "started_utc": "2026-05-26T02:26:34.973819+00:00",
+      "ended_utc": "2026-05-26T02:26:55.513355+00:00",
+      "duration_s": 20.539526571999886,
+      "paths": {
+        "emg_csv": "/home/rr/rr_data/rr_20260526_102634/rr_emg_C071CC2A3ADB_20260526_102634.csv",
+        "imu_csv": null,
+        "robot_csv": null
+      },
+      "rows_written": {
+        "emg": 20550,
+        "imu": 0,
+        "robot": 0
+      }
+    }
+  ]
+}
