@@ -8,21 +8,15 @@ filtering such as Butterworth filters designed by scipy.signal.butter.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from enum import IntEnum
-
 import numpy as np
 from scipy import signal
 
 
-class FilterType(IntEnum):
-    """Supported online filter categories."""
-
-    FIR = 0
-    IIR = 1
+FIR_FILTER = 0
+IIR_FILTER = 1
 
 
-def _as_float_coefficients(name: str, coefficients: Iterable[float]) -> np.ndarray:
+def _as_float_coefficients(name: str, coefficients) -> np.ndarray:
     values = np.asarray(list(coefficients), dtype=float)
     if values.ndim != 1 or len(values) == 0:
         raise ValueError(f"{name} coefficients must be a non-empty 1D sequence.")
@@ -32,7 +26,7 @@ def _as_float_coefficients(name: str, coefficients: Iterable[float]) -> np.ndarr
 class OnlineFIR:
     """Sample-by-sample FIR filter using input history only."""
 
-    def __init__(self, coefficients: Iterable[float]):
+    def __init__(self, coefficients):
         self.b = _as_float_coefficients("FIR", coefficients)
         self.input_history = np.zeros(len(self.b), dtype=float)
 
@@ -42,7 +36,7 @@ class OnlineFIR:
 
         return float(np.dot(self.b, self.input_history))
 
-    def filter_array(self, input_values: Iterable[float]) -> np.ndarray:
+    def filter_array(self, input_values) -> np.ndarray:
         values = np.asarray(list(input_values), dtype=float)
         if values.ndim != 1:
             raise ValueError("FIR input values must be a 1D sequence.")
@@ -76,8 +70,8 @@ class OnlineIIR:
 
     def __init__(
         self,
-        numerator: Iterable[float],
-        denominator: Iterable[float],
+        numerator,
+        denominator,
     ):
         self.b = _as_float_coefficients("IIR numerator", numerator)
         self.a = _as_float_coefficients("IIR denominator", denominator)
@@ -112,7 +106,7 @@ class OnlineIIR:
 
         return float(y)
 
-    def filter_array(self, input_values: Iterable[float]) -> np.ndarray:
+    def filter_array(self, input_values) -> np.ndarray:
         values = np.asarray(list(input_values), dtype=float)
         if values.ndim != 1:
             raise ValueError("IIR input values must be a 1D sequence.")
@@ -134,21 +128,21 @@ class OnlineFilter:
     Compatibility wrapper around clearer FIR/IIR implementations.
 
     type_of_filter:
-        0 or FilterType.FIR -> FIR filter
-        1 or FilterType.IIR -> IIR filter
+        0 -> FIR filter
+        1 -> IIR filter
     """
 
     def __init__(
         self,
-        type_of_filter: int | FilterType,
-        coefficients_in: Iterable[float],
-        coefficients_out: Iterable[float] | None = None,
+        type_of_filter: int,
+        coefficients_in,
+        coefficients_out=None,
     ):
-        self.type_of_filter = FilterType(type_of_filter)
-
-        if self.type_of_filter == FilterType.FIR:
+        if type_of_filter == FIR_FILTER:
+            self.type_of_filter = FIR_FILTER
             self._filter = OnlineFIR(coefficients_in)
-        elif self.type_of_filter == FilterType.IIR:
+        elif type_of_filter == IIR_FILTER:
+            self.type_of_filter = IIR_FILTER
             if coefficients_out is None:
                 raise ValueError("IIR filters require denominator coefficients.")
             self._filter = OnlineIIR(coefficients_in, coefficients_out)
@@ -158,7 +152,7 @@ class OnlineFilter:
     def filter(self, input_value: float) -> float:
         return self._filter.filter(input_value)
 
-    def filter_array(self, input_values: Iterable[float]) -> np.ndarray:
+    def filter_array(self, input_values) -> np.ndarray:
         return self._filter.filter_array(input_values)
 
     def reset(self) -> None:
