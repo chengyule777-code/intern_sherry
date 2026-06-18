@@ -49,8 +49,9 @@ QrsDetectorClass, QRS_SOURCE = _load_processing_class(
     "QrsDetector",
 )
 HeartRateCalculatorClass, HEART_RATE_SOURCE = _load_processing_class(
-    "code.update_heartbeat_calculating",
+    "code.update_heartbeat_calculation",
     "code.heartbeat_calculating",
+    "UpdatedHeartRateCalculator",
     "HeartRateCalculator",
 )
 SwtEmgDenoiseClass, SWT_SOURCE = _load_processing_class(
@@ -110,7 +111,10 @@ class SingleChannelUpdatedPipeline:
             self.qrs_detector = QrsDetectorClass(delay)
         else:
             self.qrs_detector = QrsDetectorClass(delay, fs)
-        self.heart_rate_calculator = HeartRateCalculatorClass(delay)
+        if HEART_RATE_SOURCE == "code.heartbeat_calculating":
+            self.heart_rate_calculator = HeartRateCalculatorClass(delay)
+        else:
+            self.heart_rate_calculator = HeartRateCalculatorClass(delay, fs)
         self.swt_denoising = SwtEmgDenoiseClass(fs, delay, 1)
         self.envelope_calculator = EnvelopeCalculatorClass(False, envelope_window)
 
