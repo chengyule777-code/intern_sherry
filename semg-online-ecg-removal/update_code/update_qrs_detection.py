@@ -8,7 +8,7 @@ QRS peak is reported, otherwise ``0``.
 
 from scipy import signal
 
-from code import update_online_filter
+from update_code import update_online_filter
 
 
 class UpdatedQrsDetector:

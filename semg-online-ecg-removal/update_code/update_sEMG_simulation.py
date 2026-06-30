@@ -1,14 +1,12 @@
 """
 Updated single-channel simulation app for online sEMG ECG removal.
 
-The script prefers available ``update_*.py`` processing modules and falls back
-to original implementations for stages that have not been rewritten yet.
+The processing chain intentionally imports only ``update_*.py`` modules.
 """
 
 from __future__ import annotations
 
 import argparse
-from importlib import import_module
 from pathlib import Path
 
 from PySide6 import QtCharts, QtCore
@@ -17,53 +15,15 @@ from PySide6.QtCore import QPointF
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QApplication, QFrame, QMainWindow, QVBoxLayout
 
-
-def _load_processing_class(
-    preferred_module: str,
-    fallback_module: str,
-    preferred_class_name: str,
-    fallback_class_name: str | None = None,
-):
-    """
-    Prefer an updated processing module, but fall back only when that module does not exist.
-
-    Import errors raised from inside an existing updated module are allowed to surface, because
-    silently falling back would hide a broken future implementation.
-    """
-    try:
-        module = import_module(preferred_module)
-        class_name = preferred_class_name
-    except ModuleNotFoundError as exc:
-        if exc.name != preferred_module:
-            raise
-        module = import_module(fallback_module)
-        class_name = fallback_class_name or preferred_class_name
-
-    return getattr(module, class_name), module.__name__
+from update_code.update_heartbeat_calculation import UpdatedHeartRateCalculator
+from update_code.update_online_envelope import UpdatedEnvelopeCalculator
+from update_code.update_online_semg_ecg_removal import UpdatedSwtEmgDenoise
+from update_code.update_qrs_detection import UpdatedQrsDetector
 
 
-QrsDetectorClass, QRS_SOURCE = _load_processing_class(
-    "code.update_qrs_detection",
-    "code.online_qrs_detection",
-    "UpdatedQrsDetector",
-    "QrsDetector",
-)
-HeartRateCalculatorClass, HEART_RATE_SOURCE = _load_processing_class(
-    "code.update_heartbeat_calculation",
-    "code.heartbeat_calculating",
-    "UpdatedHeartRateCalculator",
-    "HeartRateCalculator",
-)
-SwtEmgDenoiseClass, SWT_SOURCE = _load_processing_class(
-    "code.update_online_semg_ecg_removal_multi_channel",
-    "code.online_semg_ecg_removal_multi_channel",
-    "SwtEmgDenoise",
-)
-EnvelopeCalculatorClass, ENVELOPE_SOURCE = _load_processing_class(
-    "code.update_online_envelope",
-    "code.online_envelope",
-    "EnvelopeCalculator",
-)
+DEFAULT_SAMPLING_RATE = 1024
+DEFAULT_DELAY_S = 300 / 1024
+DEFAULT_ENVELOPE_WINDOW_S = 256 / 1024
 
 
 class SingleChannelCsvReader:
@@ -106,40 +66,70 @@ class SingleChannelUpdatedPipeline:
     Explicit single-channel processing chain for updated simulations.
     """
 
-    def __init__(self, delay: int, fs: int, envelope_window: int = 256):
-        if QRS_SOURCE == "code.online_qrs_detection":
-            self.qrs_detector = QrsDetectorClass(delay)
-        else:
-            self.qrs_detector = QrsDetectorClass(delay, fs)
-        if HEART_RATE_SOURCE == "code.heartbeat_calculating":
-            self.heart_rate_calculator = HeartRateCalculatorClass(delay)
-        else:
-            self.heart_rate_calculator = HeartRateCalculatorClass(delay, fs)
-        self.swt_denoising = SwtEmgDenoiseClass(fs, delay, 1)
-        self.envelope_calculator = EnvelopeCalculatorClass(False, envelope_window)
+    def __init__(
+        self,
+        fs: int,
+        delay_s: float,
+        envelope_window_s: float = DEFAULT_ENVELOPE_WINDOW_S,
+    ):
+        if fs <= 0:
+            raise ValueError("fs must be positive.")
+        if delay_s < 0:
+            raise ValueError("delay_s must be non-negative.")
+        if envelope_window_s <= 0:
+            raise ValueError("envelope_window_s must be positive.")
+
+        self.fs = fs
+        self.dt_s = 1.0 / fs
+        self.delay_s = delay_s
+        self.envelope_window_s = envelope_window_s
+        # The QRS detector still exposes its delay as samples, so convert the
+        # physical delay at this boundary and keep the rest of the pipeline in seconds.
+        self.delay_samples = int(round(delay_s * fs))
+
+        self.qrs_detector = UpdatedQrsDetector(self.delay_samples, fs)
+        self.heart_rate_calculator = UpdatedHeartRateCalculator(fs)
+        self.swt_denoising = UpdatedSwtEmgDenoise(fs, delay_s)
+        self.envelope_calculator = UpdatedEnvelopeCalculator(fs, envelope_window_s)
 
     def process_sample(self, measured_value: float) -> tuple[float, float]:
-        peak = self.qrs_detector.qrs_detection(measured_value)
-        heart_rate = self.heart_rate_calculator.get_heartrate(peak)
-        denoised_value = self.swt_denoising.swt_emg_denoising([measured_value], peak, heart_rate)[0]
+        peak = self.qrs_detector.qrs_detection(measured_value, self.dt_s)
+        rr_interval_s = self.heart_rate_calculator.get_rr_interval_s(peak, self.dt_s)
+        denoised_value = self.swt_denoising.swt_emg_denoising(
+            measured_value,
+            peak,
+            rr_interval_s,
+            self.dt_s,
+        )
         envelope_value = self.envelope_calculator.calculate_envelope(denoised_value)
 
         return denoised_value, envelope_value
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, csv_path: Path):
+    def __init__(
+        self,
+        csv_path: Path,
+        fs: int = DEFAULT_SAMPLING_RATE,
+        delay_s: float = DEFAULT_DELAY_S,
+        envelope_window_s: float = DEFAULT_ENVELOPE_WINDOW_S,
+    ):
         super().__init__()
 
-        self.sampling_rate = 1024
+        self.sampling_rate = fs
         self.length_of_signal = 10
-        self.delay = 300
+        self.delay_s = delay_s
+        self.envelope_window_s = envelope_window_s
         self.length_window = self.sampling_rate * self.length_of_signal
-        self.samples_per_tick = 70
         self.timer_interval_ms = 35
+        self.samples_per_tick = max(1, int(round(self.sampling_rate * self.timer_interval_ms / 1000)))
 
         self.reader = SingleChannelCsvReader(csv_path)
-        self.pipeline = SingleChannelUpdatedPipeline(self.delay, self.sampling_rate)
+        self.pipeline = SingleChannelUpdatedPipeline(
+            self.sampling_rate,
+            self.delay_s,
+            self.envelope_window_s,
+        )
 
         self.y_ranges = [(-0.2, 0.2), (-0.08, 0.08)]
         self._initialize_plotter()
@@ -264,17 +254,35 @@ def parse_args():
     parser.add_argument(
         "--print-pipeline",
         action="store_true",
-        help="Print which updated/fallback processing modules are used before launching the UI.",
+        help="Print which updated processing modules are used before launching the UI.",
+    )
+    parser.add_argument(
+        "--fs",
+        type=int,
+        default=DEFAULT_SAMPLING_RATE,
+        help="Sampling rate in Hz.",
+    )
+    parser.add_argument(
+        "--delay-s",
+        type=float,
+        default=DEFAULT_DELAY_S,
+        help="QRS output delay in seconds.",
+    )
+    parser.add_argument(
+        "--envelope-window-s",
+        type=float,
+        default=DEFAULT_ENVELOPE_WINDOW_S,
+        help="RMS envelope window duration in seconds.",
     )
     return parser.parse_args()
 
 
 def print_pipeline_sources():
     print("Processing modules:")
-    print(f"- QRS detection: {QRS_SOURCE}")
-    print(f"- heart rate: {HEART_RATE_SOURCE}")
-    print(f"- SWT denoising: {SWT_SOURCE}")
-    print(f"- envelope: {ENVELOPE_SOURCE}")
+    print("- QRS detection: code.update_qrs_detection.UpdatedQrsDetector")
+    print("- heart rate: code.update_heartbeat_calculation.UpdatedHeartRateCalculator")
+    print("- SWT denoising: code.update_online_semg_ecg_removal.UpdatedSwtEmgDenoise")
+    print("- envelope: code.update_online_envelope.UpdatedEnvelopeCalculator")
 
 
 if __name__ == "__main__":
@@ -286,6 +294,11 @@ if __name__ == "__main__":
         print_pipeline_sources()
 
     app = QApplication([])
-    window = MainWindow(args.csv)
+    window = MainWindow(
+        args.csv,
+        fs=args.fs,
+        delay_s=args.delay_s,
+        envelope_window_s=args.envelope_window_s,
+    )
     window.show()
     app.exec()
